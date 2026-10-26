@@ -1,23 +1,83 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="mrbd-web-app-capable" content="yes"><title>Thumb Beats · Beat Builder</title><style>
-*{box-sizing:border-box}body{margin:0;background:#000;color:#fff;font:18px system-ui}main{max-width:640px;padding:18px;margin:auto}header{color:#8fffc9;font-weight:800;display:flex;justify-content:space-between}small{font-size:12px}h1{font-size:28px;margin:12px 0}p{color:#c2cfc9;font-size:15px;line-height:1.5}button,a{font:inherit;color:white;background:#14221d;border:2px solid #365247;border-radius:7px;text-decoration:none}button{cursor:pointer}.controls{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}.controls button{padding:8px;font-size:15px}.row{display:grid;grid-template-columns:55px repeat(16,1fr);gap:3px;align-items:center;margin:10px 0}.row b{font-size:13px}.step{height:42px;padding:0;font-size:10px}.step:nth-of-type(4n+1){border-left-color:#b7c9c0}.on{background:#63dca7;color:#001b10}.selected{outline:3px solid #fff;outline-offset:1px}.playing{box-shadow:inset 0 -7px #ffcb65}#selection{font-size:22px;font-weight:700;margin:14px 0}#state{color:#ffcb65}footer{display:flex;gap:12px;margin-top:18px}footer a{font-size:14px;padding:7px}@media(max-width:450px){main{padding:10px}.row{gap:2px;grid-template-columns:42px repeat(16,1fr)}.step{height:36px;font-size:8px}.row b{font-size:11px}}
-</style></head><body><main><header>THUMB BEATS <small>BEAT BUILDER / 03</small></header><h1>Build your groove.</h1><p>← → move step · ↑ ↓ change drum · index pinch toggles a hit.<br>Slide up from Kick to reach Play and tempo controls.</p><div class="controls" id="controls"><button>Play</button><button>− Tempo</button><button>+ Tempo</button><button>Starter</button><button>Clear</button></div><div id="state">Stopped · 100 BPM</div><div id="grid" aria-label="16-step drum sequencer"></div><div id="selection"></div><p id="notice">One bar · 16 steps · edits save on this device.</p><footer><a href="slides.html">Slide drums</a><a href="contact.html">Contact test</a><a href="wrist.html">Wrist select</a></footer></main><script>
-'use strict';
-const names=['Kick','Snare','Hi-hat','Tom'],$=id=>document.getElementById(id);
-const starter=()=>[Array.from({length:16},(_,i)=>i===0||i===8),Array.from({length:16},(_,i)=>i===4||i===12),Array.from({length:16},(_,i)=>i%2===0),Array(16).fill(false)];
-let pattern=starter(),bpm=100,row=0,col=0,control=0,playing=false,starting=false,token=0,ctx,noise,master,timer,frame,nextTime=0,nextStep=0,queue=[],playhead=-1;
-try{const s=JSON.parse(localStorage.getItem('thumb-beats-builder-v1'));if(s&&s.pattern?.length===4&&s.pattern.every(r=>r.length===16&&r.every(v=>typeof v==='boolean'))){pattern=s.pattern;bpm=Number.isFinite(s.bpm)?Math.max(50,Math.min(180,s.bpm)):100;}}catch{}
-function save(){try{localStorage.setItem('thumb-beats-builder-v1',JSON.stringify({pattern,bpm}));}catch{$('notice').textContent='Storage unavailable; keep this page open to retain edits.';}}
-const cells=[];for(let r=0;r<4;r++){const line=document.createElement('div');line.className='row';const label=document.createElement('b');label.textContent=names[r];line.append(label);cells[r]=[];for(let c=0;c<16;c++){const b=document.createElement('button');b.className='step';b.textContent=c+1;b.onclick=()=>{row=r;col=c;toggle();};line.append(b);cells[r][c]=b;}$('grid').append(line);}
-const controls=Array.from($('controls').children);
-function render(){for(let r=0;r<4;r++)for(let c=0;c<16;c++){const b=cells[r][c];b.classList.toggle('on',pattern[r][c]);b.classList.toggle('selected',row===r&&col===c);b.classList.toggle('playing',playhead===c);b.setAttribute('aria-pressed',String(pattern[r][c]));b.setAttribute('aria-label',names[r]+' step '+(c+1));}controls.forEach((b,i)=>b.classList.toggle('selected',row===-1&&control===i));controls[0].textContent=playing?'Stop':'Play';$('state').textContent=(playing?'Playing':'Stopped')+' · '+bpm+' BPM';$('selection').textContent=row===-1?'Controls · '+controls[control].textContent:names[row]+' · Step '+(col+1)+' · '+(pattern[row][col]?'ON':'OFF');}
-function toggle(){pattern[row][col]=!pattern[row][col];save();render();}
-function voice(r,t){const g=ctx.createGain();g.connect(master);let s,f;if(r===0||r===3){s=ctx.createOscillator();s.frequency.setValueAtTime(r===0?145:260,t);s.frequency.exponentialRampToValueAtTime(r===0?45:100,t+.13);g.gain.setValueAtTime(.38,t);g.gain.exponentialRampToValueAtTime(.001,t+.22);s.connect(g);}else{s=ctx.createBufferSource();s.buffer=noise;f=ctx.createBiquadFilter();f.type='highpass';f.frequency.value=r===2?7000:1400;s.connect(f);f.connect(g);g.gain.setValueAtTime(r===2?.12:.25,t);g.gain.exponentialRampToValueAtTime(.001,t+(r===2?.045:.15));}s.onended=()=>{s.disconnect();g.disconnect();if(f)f.disconnect();};s.start(t);s.stop(t+.25);}
-function schedule(){if(!playing)return;if(nextTime<ctx.currentTime-.1){nextTime=ctx.currentTime+.02;queue=[];}while(nextTime<ctx.currentTime+.1){for(let r=0;r<4;r++)if(pattern[r][nextStep])voice(r,nextTime);queue.push({time:nextTime,step:nextStep});nextStep=(nextStep+1)%16;nextTime+=60/bpm/4;}}
-function animate(){if(!playing)return;let changed=false;while(queue.length&&queue[0].time<=ctx.currentTime){playhead=queue.shift().step;changed=true;}if(changed)render();frame=requestAnimationFrame(animate);}
-function stop(){token++;starting=false;playing=false;clearInterval(timer);cancelAnimationFrame(frame);queue=[];playhead=-1;if(master){master.gain.setValueAtTime(0,ctx.currentTime);master.disconnect();master=null;}if(ctx)ctx.suspend();render();}
-async function play(){if(playing){stop();return;}if(starting)return;starting=true;const ticket=++token;try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)throw Error('Audio unavailable');if(!ctx){ctx=new AC({latencyHint:'interactive'});noise=ctx.createBuffer(1,Math.floor(ctx.sampleRate*.25),ctx.sampleRate);const d=noise.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;}await ctx.resume();if(ticket!==token)return;master=ctx.createGain();master.gain.value=.7;master.connect(ctx.destination);playing=true;nextStep=0;nextTime=ctx.currentTime+.05;queue=[];schedule();timer=setInterval(schedule,25);animate();render();}catch(e){$('notice').textContent=e.message;}finally{if(ticket===token)starting=false;}}
-function action(i){if(i===0)play();if(i===1||i===2){bpm=Math.max(50,Math.min(180,bpm+(i===1?-5:5)));save();}if(i===3){pattern=starter();save();}if(i===4){pattern=Array.from({length:4},()=>Array(16).fill(false));save();}render();}
-controls.forEach((b,i)=>b.onclick=()=>{row=-1;control=i;action(i);});
-document.addEventListener('keydown',e=>{if(e.target.closest('a'))return;if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter','Escape',' '].includes(e.key))return;e.preventDefault();if(e.repeat)return;if(e.key==='Escape'){stop();row=-1;control=0;}else if(e.key===' '){play();}else if(e.key==='Enter'){if(row===-1)action(control);else toggle();}else if(e.key==='ArrowUp')row=Math.max(-1,row-1);else if(e.key==='ArrowDown')row=Math.min(3,row+1);else if(row===-1)control=(control+(e.key==='ArrowLeft'?-1:1)+5)%5;else col=(col+(e.key==='ArrowLeft'?-1:1)+16)%16;render();});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});window.addEventListener('pagehide',stop);render();
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="mrbd-web-app-capable" content="yes"><title>Thumb Beats · Slide drums</title><style>*{box-sizing:border-box}body{margin:0;background:#000;color:#fff;font:18px system-ui,sans-serif}main{max-width:600px;margin:auto;padding:20px}header{display:flex;justify-content:space-between;align-items:center;color:#8fffc9;font-weight:800;letter-spacing:2px}small{font-size:12px;letter-spacing:1px}h1{font-size:30px;margin:16px 0 4px}p{font-size:16px;margin:0 0 14px;color:#c8d6dd}button{background:#14221d;border:2px solid #45685a;border-radius:12px;color:white;font:700 18px system-ui;cursor:pointer}button:focus-visible{outline:3px solid #8fffc9;outline-offset:2px}#start{width:100%;height:54px;background:#8fffc9;color:#001b10;border:0}.readout{display:grid;grid-template-columns:1fr 2fr 1fr;padding:16px 0;gap:8px}.readout div{display:flex;flex-direction:column}.readout strong{font-size:28px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.readout label{font-size:11px;letter-spacing:1px;color:#9faeb7}.pads{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.pads button{height:72px}.pads small{display:block;color:#b7c9c0;margin-top:6px}.pads .lit{background:#8fffc9;color:#001b10}.log{margin-top:16px;border-top:1px solid #33443d;padding-top:10px}.loghead{display:flex;justify-content:space-between;font-size:12px;letter-spacing:1px;color:#8fffc9}pre{font:14px/1.5 ui-monospace,monospace;height:84px;overflow:hidden;margin:8px 0}footer{font-size:13px;line-height:1.5;color:#a3b5ac} @media(max-width:400px){main{padding:12px}header small{font-size:9px}.pads{gap:4px}.pads button{font-size:15px}}
+  a{color:#8fffc9}nav{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px}.pads div{border:2px solid #45685a;border-radius:12px;padding:10px 3px;text-align:center}.chosen{background:#244d3c}#play:focus{outline:2px solid #8fffc9}#selected{font-size:32px;font-weight:800;padding:10px}#calibrate{padding:10px;margin-top:8px}[hidden]{display:none!important}</style></head><body><main><header>THUMB BEATS<small>LAB / 02</small></header><h1>Slide drums</h1><p id="status">Slide left: kick · up: snare · down: hi-hat · right: tom.</p><button id="start">Start playing</button><button id="calibrate" hidden>Calibrate neutral wrist</button><section id="play" tabindex="-1" aria-label="Drum play area"><div id="selected">Kick</div><div class="pads"><div data-sound="kick">Kick<small>←</small></div><div data-sound="snare">Snare<small>↑</small></div><div data-sound="hat">Hi-hat<small>↓</small></div><div data-sound="tom">Tom<small>→</small></div></div><section class="readout"><div><strong id="count">0</strong><label>HITS</label></div><div><strong id="last">—</strong><label>LAST INPUT</label></div><div><strong id="gap">—</strong><label>GAP · MS</label></div></section></section><div class="loghead">EVENTS <span id="audio">Audio off</span></div><pre id="events">Ready.</pre><footer>Escape pauses. Index pinch does not play a drum.</footer><nav id="navigation"><a href="./">Slide drums</a><a href="contact.html">Contact test</a><a href="wrist.html">Wrist select</a><a href="Thumb-Beats-Gesture-Lab.html">Original</a></nav></main><script>'use strict';const mode="slides";function sound(kind){if(!ctx||ctx.state!=='running')return;const t=ctx.currentTime,g=ctx.createGain();g.connect(ctx.destination);let s;if(kind==='kick'||kind==='tom'){s=ctx.createOscillator();s.frequency.setValueAtTime(kind==='kick'?145:260,t);s.frequency.exponentialRampToValueAtTime(kind==='kick'?45:100,t+.13);g.gain.setValueAtTime(.45,t);g.gain.exponentialRampToValueAtTime(.001,t+.22);s.connect(g);}else{s=ctx.createBufferSource();s.buffer=noise;const f=ctx.createBiquadFilter();f.type='highpass';f.frequency.value=kind==='hat'?7000:1400;s.connect(f);f.connect(g);g.gain.setValueAtTime(kind==='hat'?.15:.3,t);g.gain.exponentialRampToValueAtTime(.001,t+(kind==='hat'?.045:.15));}s.onended=()=>{s.disconnect();g.disconnect();};s.start(t);s.stop(t+.25);}
+
+const $=id=>document.getElementById(id), names=['Kick','Snare','Hi-hat','Tom'], kinds=['kick','snare','hat','tom'];
+const keyMap={ArrowLeft:0,ArrowUp:1,ArrowDown:2,ArrowRight:3,a:0,s:1,d:2,f:3};
+let ctx,noise,active=false,starting=false,generation=0,count=0,lastTime=null,selected=0,rows=[],sensor=null,poll=null,watch=null,lastReading=0,reference=null,latest=null,stableSince=0,previous=null,streamStart=0,pointer=null,downAt=0;
+function log(s){rows.unshift(s);rows.length=Math.min(rows.length,4);$('events').textContent=rows.join('\n');}
+function choose(i){selected=i;$('selected').textContent=names[i];document.querySelectorAll('[data-sound]').forEach((el,j)=>el.classList.toggle('chosen',i===j));}
+function strike(i,source){if(!active)return;sound(kinds[i]);const now=performance.now();$('gap').textContent=lastTime===null?'—':Math.round(now-lastTime);lastTime=now;$('count').textContent=++count;$('last').textContent=source;choose(i);log(source+' → '+names[i]);}
+function stopSensor(){clearInterval(poll);clearInterval(watch);poll=watch=null;if(sensor){sensor.stop();sensor=null;}reference=null;latest=null;previous=null;stableSince=0;}
+function pause(){generation++;active=false;starting=false;pointer=null;stopSensor();if(ctx)ctx.suspend();$('start').textContent='Start playing';$('audio').textContent='Paused';$('navigation').hidden=false;$('calibrate').hidden=true;}
+async function start(){
+ if(starting)return;starting=true;const ticket=++generation;
+ try{
+ const AC=window.AudioContext||window.webkitAudioContext;if(!AC)throw Error('Web Audio unavailable');
+ if(!ctx){ctx=new AC({latencyHint:'interactive'});noise=ctx.createBuffer(1,Math.floor(ctx.sampleRate*.25),ctx.sampleRate);const d=noise.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;}
+ await ctx.resume();if(ticket!==generation)return;
+ active=true;$('start').textContent='Pause';$('audio').textContent='Audio '+ctx.state;$('navigation').hidden=true;$('play').focus();
+ if(mode==='wrist'){ $('calibrate').hidden=false;startWrist(); }
+ }catch(e){$('audio').textContent=e.message;}finally{if(ticket===generation)starting=false;}
+}
+function wrap(a){return ((a+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;}
+function point(q){const [w,x,y,z]=q;return [2*(x*y-w*z),1-2*(x*x+z*z),2*(y*z+w*x)];}
+function angles(q){const v=point(q);return {yaw:Math.atan2(v[0],v[1]),pitch:Math.asin(Math.max(-1,Math.min(1,v[2])))};}
+function calibrate(){
+ if(!latest||performance.now()-lastReading>1000||performance.now()-streamStart<2000||performance.now()-stableSince<700){$('status').textContent='Hold your forearm still, then calibrate again.';return;}
+ reference=angles(latest);choose(0);$('status').textContent='Neutral: kick · raise: snare · lower: hi-hat · turn right: tom. Pinch to play.';
+ $('play').focus();
+}
+function startWrist(){
+ stopSensor();const began=performance.now();$('status').textContent='Looking for wrist sensor…';
+ poll=setInterval(()=>{
+ if(!active)return;
+ const C=window.RelativeOrientationSensor;
+ if(typeof C==='function'&&C.__imuQuatWrapped===true){
+ clearInterval(poll);poll=null;
+ try{
+ sensor=new C({sensorId:'emg-wrist'});streamStart=lastReading=performance.now();
+ sensor.addEventListener('reading',()=>{
+ const q=sensor&&sensor.quaternion;if(!q||q.length<4||!Array.from(q).every(Number.isFinite))return;
+ const now=performance.now();lastReading=now;latest=Array.from(q);
+ if(!previous||Math.abs(latest.reduce((s,v,i)=>s+v*previous[i],0))<.9998)stableSince=now;
+ previous=latest;
+ if(!reference)return;
+ const a=angles(latest),dx=wrap(a.yaw-reference.yaw)*180/Math.PI,dy=(a.pitch-reference.pitch)*180/Math.PI;
+ let next=selected;
+ if(selected===1&&dy>9)next=1;
+ else if(selected===2&&dy< -9)next=2;
+ else if(selected===3&&dx>9&&Math.abs(dy)<18)next=3;
+ else next=dy>15?1:dy< -15?2:dx>15?3:0;
+ if(next!==selected)choose(next);
+ });
+ sensor.addEventListener('error',e=>{stopSensor();$('status').textContent='Wrist unavailable: '+(e.error?.name||'sensor error')+'. Slides still select; pinch plays.';});
+ sensor.start();
+ $('status').textContent='Hold arm comfortably still for 3 seconds, then select Calibrate.';
+ watch=setInterval(()=>{if(performance.now()-lastReading>8000){stopSensor();$('status').textContent='No wrist readings. Wear the band, pause and retry. Slides still select.';}},1000);
+ }catch(e){stopSensor();$('status').textContent='Wrist unavailable: '+e.message;}
+ }else if(performance.now()-began>5000){clearInterval(poll);poll=null;$('status').textContent='Wrist API unavailable here. Slides select a sound; index pinch plays.';}
+ },200);
+}
+$('start').onclick=()=>active?pause():start();
+$('calibrate').onclick=calibrate;
+document.addEventListener('keydown',e=>{
+ if(!active)return;
+ if(e.key==='Escape'){e.preventDefault();pause();$('start').focus();return;}
+ if(e.key==='Tab')return;
+ const ui=e.target.closest&&e.target.closest('button,a');
+ if(ui)return;
+ if(e.key in keyMap){e.preventDefault();if(!e.repeat){if(mode==='slides')strike(keyMap[e.key],e.key);else choose(keyMap[e.key]);}}
+ if(e.key==='Enter'){e.preventDefault();if(mode==='wrist'&&!e.repeat)strike(selected,'index pinch');}
+});
+document.addEventListener('pointerdown',e=>{
+ if(mode!=='contact'||!active||pointer!==null||e.button!==0)return;
+ if(e.target.closest&&e.target.closest('button,a'))return;
+ pointer=e.pointerId;downAt=performance.now();e.preventDefault();strike(selected,'contact down');
+});
+document.addEventListener('pointermove',e=>{if(e.pointerId===pointer) $('status').textContent='Contact held · movement '+Math.round(e.movementX)+', '+Math.round(e.movementY);});
+function endPointer(e){if(e.pointerId!==pointer)return;log(e.type+' · '+Math.round(performance.now()-downAt)+' ms held');pointer=null;}
+document.addEventListener('pointerup',endPointer);document.addEventListener('pointercancel',endPointer);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
+window.addEventListener('pagehide',pause);
+choose(0);$('start').focus();
 </script></body></html>
