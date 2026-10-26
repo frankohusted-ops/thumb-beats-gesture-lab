@@ -1,0 +1,83 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="mrbd-web-app-capable" content="yes"><title>Thumb Beats · Slide drums</title><style>*{box-sizing:border-box}body{margin:0;background:#000;color:#fff;font:18px system-ui,sans-serif}main{max-width:600px;margin:auto;padding:20px}header{display:flex;justify-content:space-between;align-items:center;color:#8fffc9;font-weight:800;letter-spacing:2px}small{font-size:12px;letter-spacing:1px}h1{font-size:30px;margin:16px 0 4px}p{font-size:16px;margin:0 0 14px;color:#c8d6dd}button{background:#14221d;border:2px solid #45685a;border-radius:12px;color:white;font:700 18px system-ui;cursor:pointer}button:focus-visible{outline:3px solid #8fffc9;outline-offset:2px}#start{width:100%;height:54px;background:#8fffc9;color:#001b10;border:0}.readout{display:grid;grid-template-columns:1fr 2fr 1fr;padding:16px 0;gap:8px}.readout div{display:flex;flex-direction:column}.readout strong{font-size:28px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.readout label{font-size:11px;letter-spacing:1px;color:#9faeb7}.pads{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.pads button{height:72px}.pads small{display:block;color:#b7c9c0;margin-top:6px}.pads .lit{background:#8fffc9;color:#001b10}.log{margin-top:16px;border-top:1px solid #33443d;padding-top:10px}.loghead{display:flex;justify-content:space-between;font-size:12px;letter-spacing:1px;color:#8fffc9}pre{font:14px/1.5 ui-monospace,monospace;height:84px;overflow:hidden;margin:8px 0}footer{font-size:13px;line-height:1.5;color:#a3b5ac} @media(max-width:400px){main{padding:12px}header small{font-size:9px}.pads{gap:4px}.pads button{font-size:15px}}
+  a{color:#8fffc9}nav{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px}.pads div{border:2px solid #45685a;border-radius:12px;padding:10px 3px;text-align:center}.chosen{background:#244d3c}#play:focus{outline:2px solid #8fffc9}#selected{font-size:32px;font-weight:800;padding:10px}#calibrate{padding:10px;margin-top:8px}[hidden]{display:none!important}</style></head><body><main><header>THUMB BEATS<small>LAB / 02</small></header><h1>Slide drums</h1><p id="status">Slide left: kick · up: snare · down: hi-hat · right: tom.</p><button id="start">Start playing</button><button id="calibrate" hidden>Calibrate neutral wrist</button><section id="play" tabindex="-1" aria-label="Drum play area"><div id="selected">Kick</div><div class="pads"><div data-sound="kick">Kick<small>←</small></div><div data-sound="snare">Snare<small>↑</small></div><div data-sound="hat">Hi-hat<small>↓</small></div><div data-sound="tom">Tom<small>→</small></div></div><section class="readout"><div><strong id="count">0</strong><label>HITS</label></div><div><strong id="last">—</strong><label>LAST INPUT</label></div><div><strong id="gap">—</strong><label>GAP · MS</label></div></section></section><div class="loghead">EVENTS <span id="audio">Audio off</span></div><pre id="events">Ready.</pre><footer>Escape pauses. Index pinch does not play a drum.</footer><nav id="navigation"><a href="./">Slide drums</a><a href="contact.html">Contact test</a><a href="wrist.html">Wrist select</a><a href="Thumb-Beats-Gesture-Lab.html">Original</a></nav></main><script>'use strict';const mode="slides";function sound(kind){if(!ctx||ctx.state!=='running')return;const t=ctx.currentTime,g=ctx.createGain();g.connect(ctx.destination);let s;if(kind==='kick'||kind==='tom'){s=ctx.createOscillator();s.frequency.setValueAtTime(kind==='kick'?145:260,t);s.frequency.exponentialRampToValueAtTime(kind==='kick'?45:100,t+.13);g.gain.setValueAtTime(.45,t);g.gain.exponentialRampToValueAtTime(.001,t+.22);s.connect(g);}else{s=ctx.createBufferSource();s.buffer=noise;const f=ctx.createBiquadFilter();f.type='highpass';f.frequency.value=kind==='hat'?7000:1400;s.connect(f);f.connect(g);g.gain.setValueAtTime(kind==='hat'?.15:.3,t);g.gain.exponentialRampToValueAtTime(.001,t+(kind==='hat'?.045:.15));}s.onended=()=>{s.disconnect();g.disconnect();};s.start(t);s.stop(t+.25);}
+
+const $=id=>document.getElementById(id), names=['Kick','Snare','Hi-hat','Tom'], kinds=['kick','snare','hat','tom'];
+const keyMap={ArrowLeft:0,ArrowUp:1,ArrowDown:2,ArrowRight:3,a:0,s:1,d:2,f:3};
+let ctx,noise,active=false,starting=false,generation=0,count=0,lastTime=null,selected=0,rows=[],sensor=null,poll=null,watch=null,lastReading=0,reference=null,latest=null,stableSince=0,previous=null,streamStart=0,pointer=null,downAt=0;
+function log(s){rows.unshift(s);rows.length=Math.min(rows.length,4);$('events').textContent=rows.join('\n');}
+function choose(i){selected=i;$('selected').textContent=names[i];document.querySelectorAll('[data-sound]').forEach((el,j)=>el.classList.toggle('chosen',i===j));}
+function strike(i,source){if(!active)return;sound(kinds[i]);const now=performance.now();$('gap').textContent=lastTime===null?'—':Math.round(now-lastTime);lastTime=now;$('count').textContent=++count;$('last').textContent=source;choose(i);log(source+' → '+names[i]);}
+function stopSensor(){clearInterval(poll);clearInterval(watch);poll=watch=null;if(sensor){sensor.stop();sensor=null;}reference=null;latest=null;previous=null;stableSince=0;}
+function pause(){generation++;active=false;starting=false;pointer=null;stopSensor();if(ctx)ctx.suspend();$('start').textContent='Start playing';$('audio').textContent='Paused';$('navigation').hidden=false;$('calibrate').hidden=true;}
+async function start(){
+ if(starting)return;starting=true;const ticket=++generation;
+ try{
+ const AC=window.AudioContext||window.webkitAudioContext;if(!AC)throw Error('Web Audio unavailable');
+ if(!ctx){ctx=new AC({latencyHint:'interactive'});noise=ctx.createBuffer(1,Math.floor(ctx.sampleRate*.25),ctx.sampleRate);const d=noise.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;}
+ await ctx.resume();if(ticket!==generation)return;
+ active=true;$('start').textContent='Pause';$('audio').textContent='Audio '+ctx.state;$('navigation').hidden=true;$('play').focus();
+ if(mode==='wrist'){ $('calibrate').hidden=false;startWrist(); }
+ }catch(e){$('audio').textContent=e.message;}finally{if(ticket===generation)starting=false;}
+}
+function wrap(a){return ((a+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;}
+function point(q){const [w,x,y,z]=q;return [2*(x*y-w*z),1-2*(x*x+z*z),2*(y*z+w*x)];}
+function angles(q){const v=point(q);return {yaw:Math.atan2(v[0],v[1]),pitch:Math.asin(Math.max(-1,Math.min(1,v[2])))};}
+function calibrate(){
+ if(!latest||performance.now()-lastReading>1000||performance.now()-streamStart<2000||performance.now()-stableSince<700){$('status').textContent='Hold your forearm still, then calibrate again.';return;}
+ reference=angles(latest);choose(0);$('status').textContent='Neutral: kick · raise: snare · lower: hi-hat · turn right: tom. Pinch to play.';
+ $('play').focus();
+}
+function startWrist(){
+ stopSensor();const began=performance.now();$('status').textContent='Looking for wrist sensor…';
+ poll=setInterval(()=>{
+ if(!active)return;
+ const C=window.RelativeOrientationSensor;
+ if(typeof C==='function'&&C.__imuQuatWrapped===true){
+ clearInterval(poll);poll=null;
+ try{
+ sensor=new C({sensorId:'emg-wrist'});streamStart=lastReading=performance.now();
+ sensor.addEventListener('reading',()=>{
+ const q=sensor&&sensor.quaternion;if(!q||q.length<4||!Array.from(q).every(Number.isFinite))return;
+ const now=performance.now();lastReading=now;latest=Array.from(q);
+ if(!previous||Math.abs(latest.reduce((s,v,i)=>s+v*previous[i],0))<.9998)stableSince=now;
+ previous=latest;
+ if(!reference)return;
+ const a=angles(latest),dx=wrap(a.yaw-reference.yaw)*180/Math.PI,dy=(a.pitch-reference.pitch)*180/Math.PI;
+ let next=selected;
+ if(selected===1&&dy>9)next=1;
+ else if(selected===2&&dy< -9)next=2;
+ else if(selected===3&&dx>9&&Math.abs(dy)<18)next=3;
+ else next=dy>15?1:dy< -15?2:dx>15?3:0;
+ if(next!==selected)choose(next);
+ });
+ sensor.addEventListener('error',e=>{stopSensor();$('status').textContent='Wrist unavailable: '+(e.error?.name||'sensor error')+'. Slides still select; pinch plays.';});
+ sensor.start();
+ $('status').textContent='Hold arm comfortably still for 3 seconds, then select Calibrate.';
+ watch=setInterval(()=>{if(performance.now()-lastReading>8000){stopSensor();$('status').textContent='No wrist readings. Wear the band, pause and retry. Slides still select.';}},1000);
+ }catch(e){stopSensor();$('status').textContent='Wrist unavailable: '+e.message;}
+ }else if(performance.now()-began>5000){clearInterval(poll);poll=null;$('status').textContent='Wrist API unavailable here. Slides select a sound; index pinch plays.';}
+ },200);
+}
+$('start').onclick=()=>active?pause():start();
+$('calibrate').onclick=calibrate;
+document.addEventListener('keydown',e=>{
+ if(!active)return;
+ if(e.key==='Escape'){e.preventDefault();pause();$('start').focus();return;}
+ if(e.key==='Tab')return;
+ const ui=e.target.closest&&e.target.closest('button,a');
+ if(ui)return;
+ if(e.key in keyMap){e.preventDefault();if(!e.repeat){if(mode==='slides')strike(keyMap[e.key],e.key);else choose(keyMap[e.key]);}}
+ if(e.key==='Enter'){e.preventDefault();if(mode==='wrist'&&!e.repeat)strike(selected,'index pinch');}
+});
+document.addEventListener('pointerdown',e=>{
+ if(mode!=='contact'||!active||pointer!==null||e.button!==0)return;
+ if(e.target.closest&&e.target.closest('button,a'))return;
+ pointer=e.pointerId;downAt=performance.now();e.preventDefault();strike(selected,'contact down');
+});
+document.addEventListener('pointermove',e=>{if(e.pointerId===pointer) $('status').textContent='Contact held · movement '+Math.round(e.movementX)+', '+Math.round(e.movementY);});
+function endPointer(e){if(e.pointerId!==pointer)return;log(e.type+' · '+Math.round(performance.now()-downAt)+' ms held');pointer=null;}
+document.addEventListener('pointerup',endPointer);document.addEventListener('pointercancel',endPointer);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
+window.addEventListener('pagehide',pause);
+choose(0);$('start').focus();
+</script></body></html>
